@@ -1,7 +1,4 @@
 
-#Gemini API KEY
-GEMINI_API_KEY=AIzaSyDq-nHG9njO9aUqmNaonTWcUYB0vkuaTn4
-
 # Entorno
 .env
 .env.local
