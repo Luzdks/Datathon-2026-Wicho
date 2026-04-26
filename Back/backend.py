@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from groq import Groq
 import pandas as pd
 import os
+import pickle
 from dotenv import load_dotenv
 from typing import Optional, Dict, List
 
@@ -10,6 +11,15 @@ load_dotenv()
 
 # Inicializar FastAPI
 app = FastAPI(title="Hey Banco - Havi Backend")
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Inicializar Groq
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -19,128 +29,186 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 
 # Cargar datasets
 print("Cargando datasets...")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+MODELS_DIR = os.path.join(BASE_DIR, "Back", "models")
+
 try:
-    clientes = pd.read_csv("data/hey_clientes.csv")
-    productos = pd.read_csv("data/hey_productos.csv")
-    transacciones = pd.read_csv("data/hey_transacciones.csv")
+    clientes = pd.read_csv(os.path.join(DATA_DIR, "hey_clientes.csv"))
+    productos = pd.read_csv(os.path.join(DATA_DIR, "hey_productos.csv"))
+    transacciones = pd.read_csv(os.path.join(DATA_DIR, "hey_transacciones.csv"))
     print(f"✅ Datasets cargados: {len(clientes)} clientes")
     print(f"   Primer usuario: {clientes['user_id'].iloc[0]}")
 except FileNotFoundError as e:
     print(f"❌ Error cargando datasets: {e}")
 
+# Cargar modelo de clustering
+clustering_model = None
+cluster_profiles = None
+try:
+    with open(os.path.join(MODELS_DIR, "clustering_model.pkl"), 'rb') as f:
+        clustering_model = pickle.load(f)
+    with open(os.path.join(MODELS_DIR, "cluster_profiles.pkl"), 'rb') as f:
+        cluster_profiles = pickle.load(f)
+    print(f"✅ Modelo de clustering cargado (5 clusters)")
+except FileNotFoundError:
+    print("⚠️ Modelo de clustering no encontrado. Ejecuta: python train_clustering_model.py")
+
 # Modelos Pydantic
 class MessageRequest(BaseModel):
-    user_id: str
     message: str
+    user_id: Optional[str] = None
+    conversation_history: List[Dict] = []  # Histórico de conversación
 
 class ChatResponse(BaseModel):
     response: str
-    user_name: str
+    user_name: Optional[str] = None
 
 # ==================== FUNCIONES ====================
 
 def get_user_profile(user_id: str) -> Optional[Dict]:
-    """Obtener perfil completo del usuario desde los CSVs."""
+    """Obtener perfil del usuario desde CSV (con caché)."""
+    # Validar que existe en clientes
+    if user_id not in clientes["user_id"].values:
+        return None
+    
+    cliente_data = clientes[clientes["user_id"] == user_id].iloc[0].to_dict()
+    
+    # Productos activos
+    productos_usuario = productos[productos["user_id"] == user_id]
+    productos_activos = []
+    if not productos_usuario.empty:
+        productos_activos = productos_usuario[
+            productos_usuario["estatus"].str.lower().isin(["activo", "vigente"])
+        ]["tipo_producto"].tolist()
+    
+    # Últimas 5 transacciones
+    ultimas_5_trans = []
+    trans_usuario = transacciones[transacciones["user_id"] == user_id]
+    if not trans_usuario.empty:
+        trans_copia = trans_usuario.copy()
+        trans_copia["fecha_hora"] = pd.to_datetime(trans_copia["fecha_hora"], errors='coerce')
+        ultimas_5_trans = trans_copia.nlargest(5, "fecha_hora")[
+            ["fecha_hora", "tipo_operacion", "monto", "descripcion_libre"]
+        ].to_dict(orient="records")
+    
+    cliente_data["productos_activos"] = productos_activos
+    cliente_data["ultimas_transacciones"] = ultimas_5_trans
+    
+    return cliente_data
+
+
+def predict_user_cluster(user_id: str) -> Optional[int]:
+    """Predecir el cluster de un usuario usando el modelo entrenado."""
+    if not clustering_model:
+        return None
+    
     try:
-        # Buscar cliente
-        cliente = clientes[clientes["user_id"] == user_id]
+        cliente = clientes[clientes["user_id"] == user_id].copy()
         if cliente.empty:
             return None
         
-        cliente_data = cliente.iloc[0].to_dict()
-        
-        # Obtener productos activos
-        productos_usuario = productos[productos["user_id"] == user_id]
-        if not productos_usuario.empty:
-            productos_activos_df = productos_usuario[
-                (productos_usuario["estatus"].str.lower() == "activo") | 
-                (productos_usuario["estatus"].str.lower() == "vigente")
-            ]
-            productos_activos = productos_activos_df["tipo_producto"].tolist()
-        else:
-            productos_activos = []
-        
-        # Obtener últimas 5 transacciones
+        # Agregar features de transacciones
         trans_usuario = transacciones[transacciones["user_id"] == user_id]
         if not trans_usuario.empty:
-            trans_usuario_copy = trans_usuario.copy()
-            trans_usuario_copy["fecha_hora"] = pd.to_datetime(trans_usuario_copy["fecha_hora"], errors='coerce')
-            ultimas_5_trans = trans_usuario_copy.nlargest(5, "fecha_hora")[
-                ["fecha_hora", "tipo_operacion", "monto", "descripcion_libre"]
-            ].to_dict(orient="records")
+            monto_total = trans_usuario["monto"].sum()
+            monto_promedio = trans_usuario["monto"].mean()
+            num_transacciones = len(trans_usuario)
         else:
-            ultimas_5_trans = []
+            monto_total = 0
+            monto_promedio = 0
+            num_transacciones = 0
         
-        cliente_data["productos_activos"] = productos_activos
-        cliente_data["ultimas_transacciones"] = ultimas_5_trans
+        cliente.loc[cliente.index[0], "monto_total"] = monto_total
+        cliente.loc[cliente.index[0], "monto_promedio"] = monto_promedio
+        cliente.loc[cliente.index[0], "num_transacciones"] = num_transacciones
         
-        return cliente_data
+        # Obtener features en el mismo orden del entrenamiento
+        feature_cols = clustering_model['feature_columns']
+        
+        # Validar que todos los features existen
+        missing_cols = [col for col in feature_cols if col not in cliente.columns]
+        if missing_cols:
+            print(f"⚠️ Features faltantes para {user_id}: {missing_cols}")
+            return None
+        
+        X_user = cliente[feature_cols].values
+        
+        # Aplicar scaler y PCA
+        X_scaled = clustering_model['scaler'].transform(X_user)
+        embedding = clustering_model['pca'].transform(X_scaled)
+        
+        # Predecir cluster
+        cluster = clustering_model['kmeans'].predict(embedding)[0]
+        return int(cluster)
     except Exception as e:
-        print(f"Error obteniendo perfil: {e}")
+        print(f"❌ Error prediciendo cluster para {user_id}: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
-def build_system_prompt(user_profile: Dict) -> str:
-    """Construir system prompt dinámico basado en el perfil del usuario."""
+def build_system_prompt(profile: Optional[Dict] = None, cluster: Optional[int] = None) -> str:
+    """System prompt dinámico basado en perfil y cluster del usuario."""
     
-    nombre = user_profile.get("nombre", "Cliente")
-    edad = user_profile.get("edad", "N/A")
-    es_hey_pro = user_profile.get("es_hey_pro", False)
-    score_buro = user_profile.get("score_buro", 600)
-    satisfaccion = user_profile.get("satisfaccion_1_10", 7)
-    patron_atipico = user_profile.get("patron_uso_atipico", False)
-    productos = user_profile.get("productos_activos", [])
-    
-    base_prompt = f"""Eres Havi, un asistente bancario experto de Hey Banco, especializado en atención al cliente.
+    # ===== SIN IDENTIFICACIÓN (usuario genérico) =====
+    if not profile:
+        return """Eres Havi, asistente de Hey Banco.
 
-INFORMACIÓN DEL CLIENTE:
-- Nombre: {nombre}
-- Edad: {edad}
-- Productos activos: {', '.join(productos) if productos else 'Ninguno'}
-- Score Buró: {score_buro}
-- Satisfacción anterior: {satisfaccion}/10
+Responde preguntas sobre:
+- Productos Hey Banco (cuentas, tarjetas, créditos, Hey Pro)
+- Servicios generales
+- Financias
 
-INSTRUCCIONES:
-1. Responde SIEMPRE en español
-2. Sé profesional, empático y resolutivo
-3. Ofrece soluciones que se alineen con el perfil del cliente
-4. Mantén un tono cálido y accesible
+Si preguntan sobre SALDO, SUS PRODUCTOS, o datos personales → sugiere escribir USR-XXXXX para ver.
 
-COMPORTAMIENTO DINÁMICO:"""
+NUNCA: tarjetas, PINs, contraseñas."""
     
-    if es_hey_pro:
-        base_prompt += "\n- El cliente es Hey Pro: Menciona beneficios exclusivos, cashback y ofertas premium."
-    else:
-        base_prompt += "\n- El cliente no es Hey Pro: Sugiere los beneficios de actualizar a Hey Pro si es relevante."
+    # ===== CON IDENTIFICACIÓN =====
+    ocupacion = profile.get("ocupacion", "Usuario").title()
+    edad = profile.get("edad", "?")
+    productos_activos = profile.get("productos_activos", [])
+    ultimas_trans = profile.get("ultimas_transacciones", [])
     
-    if patron_atipico:
-        base_prompt += "\n- ⚠️ ALERTA DE SEGURIDAD: El cliente tiene un patrón de uso atípico. Menciona protecciones de fraude si surge en la conversación."
+    # Calcular saldo aproximado (suma de últimas transacciones)
+    saldo = sum([t.get("monto", 0) for t in ultimas_trans]) if ultimas_trans else 0
     
-    if score_buro < 600:
-        base_prompt += f"\n- Score Buró bajo ({score_buro}): Sé cuidadoso. No ofrezcas crédito adicional. Enfócate en educación financiera."
+    # Datos del cliente
+    datos = f"DATOS: {ocupacion}, {edad} años"
+    if productos_activos:
+        datos += f" | Productos: {', '.join(productos_activos)}"
+    if saldo > 0:
+        datos += f" | Saldo aprox: ${saldo:,.0f}"
     
-    if satisfaccion < 6:
-        base_prompt += f"\n- Satisfacción previa baja ({satisfaccion}/10): Adopta un tono EXTRA empático y resolutivo. Busca resolver problemas rápidamente."
-    
-    return base_prompt
+    return f"""Eres Havi. Cliente identificado.
+{datos}
+
+RESPONDE EXACTAMENTE lo que pregunten:
+- Si preguntan SALDO → di el monto
+- Si preguntan PRODUCTOS → lista los productos
+- Si preguntan TRANSACCIONES → explica movimientos
+- Si preguntan BENEFICIOS → menciona Hey Pro o features
+
+NUNCA: tarjetas, PINs, contraseñas, códigos.
+
+Sé directo, natural, en español."""
 
 
-def chat_with_groq(user_message: str, system_prompt: str) -> str:
-    """Enviar mensaje a Groq y obtener respuesta."""
+def chat_with_groq(message: str, system_prompt: str) -> str:
+    """Obtener respuesta de Groq."""
     try:
-        # Usar modelo de mejor calidad disponible
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
+                {"role": "user", "content": message}
             ],
             temperature=0.7,
-            max_tokens=300
+            max_tokens=150
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"Error al conectar con Groq: {str(e)}"
+        return f"❌ Error Groq: {str(e)}"
 
 
 # ==================== ENDPOINTS ====================
@@ -153,12 +221,8 @@ def root():
 
 @app.get("/users")
 def list_users():
-    """Obtener lista de usuarios disponibles."""
-    try:
-        user_list = clientes["user_id"].unique().tolist()
-        return {"count": len(user_list), "users": user_list}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Lista de usuarios."""
+    return {"count": len(clientes), "users": clientes["user_id"].unique().tolist()}
 
 
 @app.get("/users/{user_id}/profile")
@@ -170,25 +234,90 @@ def get_profile(user_id: str):
     return profile
 
 
+@app.get("/users/{user_id}/cluster")
+def get_cluster(user_id: str):
+    """Predecir cluster del usuario."""
+    # Validar que existe el usuario
+    if user_id not in clientes["user_id"].values:
+        raise HTTPException(status_code=404, detail=f"Usuario {user_id} no encontrado")
+    
+    cluster = predict_user_cluster(user_id)
+    if cluster is None:
+        raise HTTPException(status_code=500, detail="Error prediciendo cluster")
+    
+    cluster_info = {}
+    if clustering_model:
+        cluster_names = clustering_model.get('cluster_names', {})
+        cluster_info['name'] = cluster_names.get(cluster, f"Cluster {cluster}")
+    
+    if cluster_profiles:
+        cluster_info['profile'] = cluster_profiles.get(cluster, {})
+    
+    return {
+        "user_id": user_id,
+        "cluster": cluster,
+        "info": cluster_info
+    }
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: MessageRequest):
-    """Enviar mensaje y obtener respuesta personalizada de Havi."""
+    """Enviar mensaje y obtener respuesta (con contexto de conversación y clustering)."""
     
-    # Obtener perfil del usuario
-    profile = get_user_profile(request.user_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail=f"Usuario {request.user_id} no encontrado")
+    profile = None
+    user_name = None
+    cluster = None
     
-    # Construir system prompt
-    system_prompt = build_system_prompt(profile)
+    # DEBUG: Mostrar qué recibimos
+    print(f"\n📨 MENSAJE RECIBIDO:")
+    print(f"   Mensaje: {request.message[:50]}...")
+    print(f"   User ID enviado: {request.user_id}")
+    
+    # Cargar perfil si hay user_id
+    if request.user_id:
+        print(f"   → Buscando perfil de {request.user_id}...")
+        profile = get_user_profile(request.user_id)
+        if profile:
+            print(f"   ✅ Perfil encontrado: {profile.get('ocupacion')}, {profile.get('edad')} años")
+            print(f"   ✅ Productos: {profile.get('productos_activos')}")
+            user_name = profile.get("nombre")
+            # Predecir cluster del usuario
+            cluster = predict_user_cluster(request.user_id)
+            print(f"   ✅ Cluster predicho: {cluster}")
+        else:
+            print(f"   ❌ Usuario NO encontrado en BD")
+    else:
+        print(f"   → Sin user_id → respondiendo como usuario anónimo")
+    
+    # Construir system prompt (con perfil y cluster)
+    system_prompt = build_system_prompt(profile, cluster)
+    print(f"   → Modo: {'IDENTIFICADO' if profile else 'ANÓNIMO'}")
+    
+    # Preparar mensajes: histórico + mensaje actual
+    messages = []
+    
+    # Agregar histórico de conversación
+    if request.conversation_history:
+        messages.extend(request.conversation_history)
+    
+    # Agregar mensaje actual
+    messages.append({"role": "user", "content": request.message})
     
     # Obtener respuesta de Groq
-    response = chat_with_groq(request.message, system_prompt)
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "system", "content": system_prompt}] + messages,
+            temperature=0.7,
+            max_tokens=150
+        )
+        response_text = response.choices[0].message.content
+        print(f"   ✅ Groq respondió: {response_text[:60]}...")
+    except Exception as e:
+        response_text = f"❌ Error: {str(e)}"
+        print(f"   ❌ Error Groq: {e}")
     
-    return ChatResponse(
-        response=response,
-        user_name=profile.get("nombre", "Cliente")
-    )
+    return ChatResponse(response=response_text, user_name=user_name)
 
 
 if __name__ == "__main__":
