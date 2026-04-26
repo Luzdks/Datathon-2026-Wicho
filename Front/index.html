@@ -5,344 +5,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Havi - Hey Banco</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        }
-
-        body {
-            background: #f8f9fa;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        /* Header */
-        .header {
-            background: #1a1a1a;
-            color: white;
-            padding: 12px 16px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-            min-height: auto;
-        }
-
-        .header-logo {
-            width: 40px;
-            height: 40px;
-            min-width: 40px;
-            min-height: 40px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            font-weight: 900;
-            color: white;
-            background: #333;
-            border: 2px solid transparent;
-            box-shadow: inset 0 0 0 2px #333, 0 0 20px rgba(100, 150, 255, 0.4);
-            animation: rainbowBorder 8s infinite;
-        }
-
-        @keyframes rainbowBorder {
-            0% { 
-                box-shadow: inset 0 0 0 2px #ff0000, 0 0 12px rgba(255, 0, 0, 0.4);
-            }
-            14% { 
-                box-shadow: inset 0 0 0 2px #ff7f00, 0 0 12px rgba(255, 127, 0, 0.4);
-            }
-            28% { 
-                box-shadow: inset 0 0 0 2px #ffff00, 0 0 12px rgba(255, 255, 0, 0.3);
-            }
-            42% { 
-                box-shadow: inset 0 0 0 2px #00ff00, 0 0 12px rgba(0, 255, 0, 0.4);
-            }
-            56% { 
-                box-shadow: inset 0 0 0 2px #0000ff, 0 0 12px rgba(0, 0, 255, 0.4);
-            }
-            70% { 
-                box-shadow: inset 0 0 0 2px #4b0082, 0 0 12px rgba(75, 0, 130, 0.4);
-            }
-            85% { 
-                box-shadow: inset 0 0 0 2px #9400d3, 0 0 12px rgba(148, 0, 211, 0.4);
-            }
-            100% { 
-                box-shadow: inset 0 0 0 2px #ff0000, 0 0 12px rgba(255, 0, 0, 0.4);
-            }
-        }
-
-        .header-content {
-            flex: 1;
-        }
-
-        .header h1 {
-            font-size: 22px;
-            font-weight: 700;
-            margin-bottom: 2px;
-        }
-
-        .header p {
-            font-size: 12px;
-            opacity: 0.8;
-            font-weight: 400;
-        }
-
-        /* Status bar */
-        .status-bar {
-            background: white;
-            padding: 12px 16px;
-            border-left: 4px solid #667eea;
-            font-size: 13px;
-            color: #555;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .status-bar.connected {
-            border-left-color: #10b981;
-        }
-
-        .status-bar.error {
-            border-left-color: #ef4444;
-        }
-
-        .status-text {
-            flex: 1;
-        }
-
-        .reconnect-btn {
-            background: #667eea;
-            color: white;
-            border: none;
-            border-radius: 12px;
-            padding: 4px 12px;
-            font-size: 11px;
-            cursor: pointer;
-            margin-left: 8px;
-        }
-
-        .reconnect-btn:hover {
-            background: #5a67d8;
-        }
-
-        /* User badge */
-        .user-badge {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            color: white;
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 600;
-            display: inline-block;
-            box-shadow: 0 2px 6px rgba(16, 185, 129, 0.25);
-            white-space: nowrap;
-        }
-
-        /* Container principal */
-        .container {
-            display: flex;
-            flex-direction: column;
-            flex: 1;
-            overflow: hidden;
-        }
-
-        /* Chat area */
-        .chat-area {
-            flex: 1;
-            overflow-y: auto;
-            padding: 16px;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .chat-area::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        .chat-area::-webkit-scrollbar-track {
-            background: #f1f1f1;
-        }
-
-        .chat-area::-webkit-scrollbar-thumb {
-            background: #888;
-            border-radius: 3px;
-        }
-
-        /* Mensajes */
-        .message {
-            margin: 12px 0;
-            animation: slideIn 0.3s ease-out;
-            display: flex;
-        }
-
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .message.user {
-            justify-content: flex-end;
-        }
-
-        .message-bubble {
-            max-width: 75%;
-            padding: 12px 16px;
-            border-radius: 16px;
-            word-wrap: break-word;
-            font-size: 14px;
-            line-height: 1.4;
-        }
-
-        .message.user .message-bubble {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-bottom-right-radius: 4px;
-            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.25);
-        }
-
-        .message.assistant .message-bubble {
-            background: white;
-            color: #333;
-            border-bottom-left-radius: 4px;
-            border: 1px solid #e5e7eb;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-        }
-
-        /* Input area */
-        .input-area {
-            background: white;
-            padding: 16px;
-            border-top: 1px solid #e5e7eb;
-            display: flex;
-            gap: 8px;
-        }
-
-        input[type="text"] {
-            flex: 1;
-            border: 2px solid #ddd;
-            border-radius: 25px;
-            padding: 10px 16px;
-            font-size: 14px;
-            outline: none;
-            transition: all 0.3s ease;
-            background: white;
-        }
-
-        input[type="text"]:focus {
-            border: 2px solid transparent;
-            background: linear-gradient(white, white) padding-box,
-                        linear-gradient(90deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3, #ff0000) border-box;
-            box-shadow: 0 0 15px rgba(100, 150, 255, 0.4);
-        }
-
-        button {
-            background: #1a1a1a;
-            color: white;
-            border: none;
-            border-radius: 25px;
-            padding: 10px 20px;
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 14px;
-            transition: transform 0.1s, box-shadow 0.3s;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-        }
-
-        button:hover {
-            animation: rainbowGlow 3s infinite;
-        }
-
-        @keyframes rainbowGlow {
-            0% { 
-                box-shadow: 0 4px 15px rgba(255, 0, 0, 0.5);
-            }
-            25% { 
-                box-shadow: 0 4px 15px rgba(0, 255, 0, 0.5);
-            }
-            50% { 
-                box-shadow: 0 4px 15px rgba(0, 0, 255, 0.5);
-            }
-            75% { 
-                box-shadow: 0 4px 15px rgba(255, 0, 255, 0.5);
-            }
-            100% { 
-                box-shadow: 0 4px 15px rgba(255, 0, 0, 0.5);
-            }
-        }
-
-        button:active {
-            transform: scale(0.95);
-        }
-
-        /* Welcome message */
-        .welcome {
-            text-align: center;
-            color: #999;
-            padding: 20px;
-            font-size: 14px;
-        }
-
-        /* Error message */
-        .error-message {
-            background: #fee;
-            color: #c33;
-            padding: 12px 16px;
-            border-radius: 8px;
-            margin: 12px 0;
-            font-size: 13px;
-            border-left: 3px solid #c33;
-        }
-
-        /* Diagnostic message */
-        .diagnostic {
-            background: #eff6ff;
-            color: #1e40af;
-            padding: 12px 16px;
-            border-radius: 8px;
-            margin: 12px 0;
-            font-size: 12px;
-            border-left: 3px solid #3b82f6;
-            font-family: monospace;
-            white-space: pre-wrap;
-        }
-
-        /* File protocol warning */
-        .file-warning {
-            background: #fef3c7;
-            color: #92400e;
-            padding: 16px;
-            border-radius: 8px;
-            margin: 12px 0;
-            font-size: 13px;
-            border-left: 3px solid #f59e0b;
-        }
-
-        .file-warning strong {
-            display: block;
-            margin-bottom: 8px;
-        }
-    </style>
+    <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
     <div class="header">
-        <div class="header-logo">HB</div>
+        <div class="header-logo">
+            <img src="/media/descarga.png" alt="Logo">
+        </div>
         <div class="header-content">
             <h1>Havi</h1>
             <p>Tu asistente de Hey Banco</p>
@@ -358,7 +28,9 @@
 
     <div class="container">
         <div class="chat-area" id="chatArea">
-            <div class="welcome">Hola, soy Havi tu asistente de Hey Banco. Puedo responder preguntas generales, o puedes ingresar tu usuario (USR-XXXXX) para acceder a información personalizada.</div>
+            <div class="welcome">Hola, soy Havi tu asistente de Hey Banco. Puedo responder preguntas generales, o
+                puedes
+                ingresar tu usuario (USR-XXXXX) para acceder a información personalizada.</div>
         </div>
 
         <div class="input-area">
@@ -376,6 +48,56 @@
         let isIdentified = false;
         let conversationHistory = [];
         let isConnected = false;
+        let inactivityTimer = null;
+        const INACTIVITY_LIMIT = 60000; // 1 minuto
+
+        function resetInactivityTimer() {
+            if (inactivityTimer) clearTimeout(inactivityTimer);
+            inactivityTimer = setTimeout(showSurvey, INACTIVITY_LIMIT);
+        }
+
+        function showSurvey() {
+            const chatArea = document.getElementById('chatArea');
+            chatArea.innerHTML = `
+                <div class="survey-overlay">
+                    <h2>🙏 ¿Cómo fue tu experiencia?</h2>
+                    <p>La sesión se cerró por inactividad. Ayúdanos con una breve encuesta:</p>
+                    <div class="survey-stars">
+                        <span onclick="submitSurvey(1)">⭐</span>
+                        <span onclick="submitSurvey(2)">⭐</span>
+                        <span onclick="submitSurvey(3)">⭐</span>
+                        <span onclick="submitSurvey(4)">⭐</span>
+                        <span onclick="submitSurvey(5)">⭐</span>
+                    </div>
+                    <p class="survey-thanks" id="surveyThanks"></p>
+                    <button onclick="restartChat()" class="restart-btn">Nueva conversación</button>
+                </div>
+            `;
+            // Disable input
+            document.getElementById('messageInput').disabled = true;
+            document.querySelector('button[onclick="sendMessage()"]').disabled = true;
+        }
+
+        function submitSurvey(rating) {
+            document.getElementById('surveyThanks').textContent = `¡Gracias por tu calificación de ${rating} estrellas! ⭐`;
+            console.log('Survey rating:', rating);
+            // Here you could send to backend if you add an endpoint
+        }
+
+        function restartChat() {
+            userId = null;
+            userName = null;
+            userCluster = null;
+            isIdentified = false;
+            conversationHistory = [];
+            document.getElementById('userBadge').style.display = 'none';
+            document.getElementById('messageInput').disabled = false;
+            document.querySelector('button[onclick="sendMessage()"]').disabled = false;
+            document.getElementById('chatArea').innerHTML = `
+                <div class="welcome">Hola, soy Havi tu asistente de Hey Banco. Puedo responder preguntas generales, o puedes ingresar tu usuario (USR-XXXXX) para acceder a información personalizada.</div>
+            `;
+            resetInactivityTimer();
+        }
 
         // Detectar si se abrió desde file://
         function checkFileProtocol() {
@@ -468,6 +190,10 @@
         }
 
         document.getElementById('messageInput').focus();
+        resetInactivityTimer();
+
+        // Reset timer on typing
+        document.getElementById('messageInput').addEventListener('input', resetInactivityTimer);
 
         // Enter para enviar
         document.getElementById('messageInput').addEventListener('keypress', (e) => {
@@ -476,6 +202,7 @@
 
         // Enviar mensaje
         async function sendMessage() {
+            resetInactivityTimer();
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
             if (!message) return;
@@ -486,6 +213,7 @@
             // Detectar si es user_id (sin cambiar de flujo)
             const userIdRegex = /^USR-\d{5}$/i;
             if (userIdRegex.test(message)) {
+                addMessage('user', message);
                 await identifyUser(message.toUpperCase());
                 return;
             }
@@ -515,13 +243,11 @@
                     const cr = await fetch(`${BACKEND_URL}/users/${userId_}/cluster`, { mode: 'cors' });
                     if (cr.ok) {
                         const clusterData = await cr.json();
-                        userCluster = clusterData.info.name;
+                        userCluster = clusterData.cluster || clusterData.info?.name || '';
                     }
                 } catch (e) { }
 
                 isIdentified = true;
-                // NO limpiar historial - mantener conversación anterior
-                // conversationHistory = [];
 
                 // Actualizar UI
                 const badge = document.getElementById('userBadge');
@@ -529,8 +255,12 @@
                 badge.textContent = `Identificado: ${userName}${clusterText}`;
                 badge.style.display = 'inline-block';
 
-                // NO limpiar chat - agregar mensaje de bienvenida personalizada
-                addMessage('assistant', `Te identifiqué! Ahora puedo acceder a tu información. ¿En qué te puedo ayudar?`);
+                // Agregar mensaje de bienvenida personalizada por cluster
+                let bienvenida = `Te identifiqué! Ahora puedo acceder a tu información. ¿En qué te puedo ayudar?`;
+                if (userCluster) {
+                    bienvenida += ` \n\n🏷️ Segmento detectado: **${userCluster}**`;
+                }
+                addMessage('assistant', bienvenida);
 
             } catch (e) {
                 addErrorMessage(`Error al identificar usuario: ${e.message}`);
@@ -570,6 +300,7 @@
 
                 // Efecto de escritura
                 typeMessage(typingDiv, response);
+                resetInactivityTimer();
 
             } catch (e) {
                 typingDiv.querySelector('.message-bubble').textContent = `Error: ${e.message}`;
