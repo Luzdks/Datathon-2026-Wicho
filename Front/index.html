@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Havi - Hey Banco</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div class="header">
+        <div class="header-logo">
+            <img src="/media/descarga.png" alt="Logo">
+        </div>
+        <div class="header-content">
+            <h1>Havi</h1>
+            <p>Tu asistente de Hey Banco</p>
+        </div>
+        <div id="userBadge" style="display: none;"></div>
+    </div>
+
+    <div id="statusBar" class="status-bar">
+        <span class="status-text" id="statusText">Conectando...</span>
+        <button class="reconnect-btn" onclick="checkBackend()" id="reconnectBtn"
+            style="display:none;">Reconectar</button>
+    </div>
+
+    <div class="container">
+        <div class="chat-area" id="chatArea">
+            <div class="welcome">Hola, soy Havi tu asistente de Hey Banco. Puedo responder preguntas generales, o
+                puedes
+                ingresar tu usuario (USR-XXXXX) para acceder a información personalizada.</div>
+        </div>
+
+        <div class="input-area">
+            <input type="text" id="messageInput" placeholder="Escribe o ingresa USR-XXXXX..." autocomplete="off">
+            <button id="voiceBtn" onclick="toggleVoiceInput()" title="Grabar voz">🎤</button>
+            <button onclick="sendMessage()">Enviar</button>
+        </div>
+    </div>
+
+    <script>
+        const BACKEND_URL = "http://localhost:8000";
+        let userId = null;
+        let userName = null;
+        let userCluster = null;
+        let isIdentified = false;
+        let conversationHistory = [];
+        let isConnected = false;
+        let inactivityTimer = null;
+        const INACTIVITY_LIMIT = 60000; // 1 minuto
+
+        function resetInactivityTimer() {
+            if (inactivityTimer) clearTimeout(inactivityTimer);
+            inactivityTimer = setTimeout(showSurvey, INACTIVITY_LIMIT);
+        }
+
+        function showSurvey() {
+            const chatArea = document.getElementById('chatArea');
+            chatArea.innerHTML = `
+                <div class="survey-overlay">
+                    <h2>🙏 ¿Cómo fue tu experiencia?</h2>
+                    <p>La sesión se cerró por inactividad. Ayúdanos con una breve encuesta:</p>
+                    <div class="survey-stars">
+                        <span onclick="submitSurvey(1)">⭐</span>
+                        <span onclick="submitSurvey(2)">⭐</span>
+                        <span onclick="submitSurvey(3)">⭐</span>
+                        <span onclick="submitSurvey(4)">⭐</span>
+                        <span onclick="submitSurvey(5)">⭐</span>
+                    </div>
+                    <p class="survey-thanks" id="surveyThanks"></p>
+                    <button onclick="restartChat()" class="restart-btn">Nueva conversación</button>
+                </div>
+            `;
+            // Disable input
+            document.getElementById('messageInput').disabled = true;
+            document.querySelector('button[onclick="sendMessage()"]').disabled = true;
+        }
+
+        function submitSurvey(rating) {
+            document.getElementById('surveyThanks').textContent = `¡Gracias por tu calificación de ${rating} estrellas! ⭐`;
+            console.log('Survey rating:', rating);
+            // Here you could send to backend if you add an endpoint
+        }
+
+        function restartChat() {
+            userId = null;
+            userName = null;
+            userCluster = null;
+            isIdentified = false;
+            conversationHistory = [];
+            document.getElementById('userBadge').style.display = 'none';
+            document.getElementById('messageInput').disabled = false;
+            document.querySelector('button[onclick="sendMessage()"]').disabled = false;
+            document.getElementById('chatArea').innerHTML = `
+                <div class="welcome">Hola, soy Havi tu asistente de Hey Banco. Puedo responder preguntas generales, o puedes ingresar tu usuario (USR-XXXXX) para acceder a información personalizada.</div>
+            `;
+            resetInactivityTimer();
+        }
+
+        // Detectar si se abrió desde file://
+        function checkFileProtocol() {
+            if (window.location.protocol === 'file:') {
+                const chatArea = document.getElementById('chatArea');
+                chatArea.innerHTML = `
+                    <div class="file-warning">
+                        <strong>⚠️ Advertencia: Abriste el archivo directamente</strong>
+                        Estás accediendo a este archivo usando <code>file://</code> en lugar de un servidor web.
+                        <br><br>
+                        <strong>Para que funcione correctamente:</strong>
+                        <ol style="margin-top:8px; padding-left:20px;">
+                            <li>Asegúrate de que el servidor frontend esté corriendo: <code>python -m http.server 8080 --directory Front</code></li>
+                            <li>Abre tu navegador y ve a: <a href="http://localhost:8080" target="_blank">http://localhost:8080</a></li>
+                        </ol>
+                    </div>
+                `;
+                return true;
+            }
+            return false;
+        }
+
+        // Verificar conexión con backend
+        async function checkBackend() {
+            const statusBar = document.getElementById('statusBar');
+            const statusText = document.getElementById('statusText');
+            const reconnectBtn = document.getElementById('reconnectBtn');
+
+            statusText.textContent = 'Conectando...';
+            statusBar.className = 'status-bar';
+            reconnectBtn.style.display = 'none';
+
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+                const res = await fetch(`${BACKEND_URL}/`, {
+                    mode: 'cors',
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
+                if (res.ok) {
+                    const data = await res.json();
+                    statusText.textContent = `✓ Conectado - ${data.status}`;
+                    statusBar.classList.add('connected');
+                    isConnected = true;
+
+                    // Limpiar mensajes de error de conexión
+                    const oldErrors = document.querySelectorAll('.diagnostic');
+                    oldErrors.forEach(el => el.remove());
+                } else {
+                    statusText.textContent = `✗ Error: Backend respondió ${res.status}`;
+                    statusBar.classList.add('error');
+                    isConnected = false;
+                    reconnectBtn.style.display = 'inline-block';
+                    addDiagnostic(`Backend respondió con status ${res.status}. Verifica que el backend esté corriendo en puerto 8000.`);
+                }
+            } catch (e) {
+                isConnected = false;
+                reconnectBtn.style.display = 'inline-block';
+
+                let errorMsg = '';
+                if (e.name === 'TypeError' && e.message.includes('Failed to fetch')) {
+                    errorMsg = 'No se pudo conectar al backend. Posibles causas:\n' +
+                        '1. El backend no está corriendo en puerto 8000\n' +
+                        '2. Firewall o antivirus bloqueando la conexión\n' +
+                        '3. CORS bloqueado por políticas del navegador';
+                    statusText.textContent = '✗ Error: No puedo conectar con el backend';
+                } else if (e.name === 'AbortError') {
+                    errorMsg = 'La conexión tardó demasiado. El backend podría estar sobrecargado.';
+                    statusText.textContent = '✗ Error: Timeout';
+                } else {
+                    errorMsg = `Error: ${e.name}: ${e.message}`;
+                    statusText.textContent = `✗ Error: ${e.message}`;
+                }
+
+                statusBar.classList.add('error');
+                addDiagnostic(errorMsg);
+            }
+        }
+
+        // Inicializar
+        if (!checkFileProtocol()) {
+            checkBackend();
+            // Reintentar cada 10 segundos si no está conectado
+            setInterval(() => {
+                if (!isConnected) checkBackend();
+            }, 10000);
+        }
+
+        document.getElementById('messageInput').focus();
+        resetInactivityTimer();
+
+        // Reset timer on typing
+        document.getElementById('messageInput').addEventListener('input', resetInactivityTimer);
+
+        // Enter para enviar
+        document.getElementById('messageInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        // Enviar mensaje
+        async function sendMessage() {
+            resetInactivityTimer();
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            if (!message) return;
+
+            input.value = '';
+            input.focus();
+
+            // Detectar si es user_id (sin cambiar de flujo)
+            const userIdRegex = /^USR-\d{5}$/i;
+            if (userIdRegex.test(message)) {
+                addMessage('user', message);
+                await identifyUser(message.toUpperCase());
+                return;
+            }
+
+            // Enviar mensaje normal al chat (identificado o no)
+            addMessage('user', message);
+            await sendChatMessage(message);
+        }
+
+        // Identificar usuario
+        async function identifyUser(userId_) {
+            try {
+                const res = await fetch(`${BACKEND_URL}/users/${userId_}/profile`, { mode: 'cors' });
+                if (!res.ok) {
+                    addErrorMessage(`Usuario ${userId_} no encontrado.`);
+                    return;
+                }
+
+                const profile = await res.json();
+                userId = userId_;
+                const ocupacion = profile.ocupacion || 'Usuario';
+                const edad = profile.edad || '?';
+                userName = `${ocupacion.charAt(0).toUpperCase() + ocupacion.slice(1)}, ${edad} años`;
+
+                // Obtener cluster
+                try {
+                    const cr = await fetch(`${BACKEND_URL}/users/${userId_}/cluster`, { mode: 'cors' });
+                    if (cr.ok) {
+                        const clusterData = await cr.json();
+                        userCluster = clusterData.cluster || clusterData.info?.name || '';
+                    }
+                } catch (e) { }
+
+                isIdentified = true;
+
+                // Actualizar UI
+                const badge = document.getElementById('userBadge');
+                const clusterText = userCluster ? ` • ${userCluster}` : '';
+                badge.textContent = `Identificado: ${userName}${clusterText}`;
+                badge.style.display = 'inline-block';
+
+                // Agregar mensaje de bienvenida personalizada por cluster
+                let bienvenida = `Te identifiqué! Ahora puedo acceder a tu información. ¿En qué te puedo ayudar?`;
+                if (userCluster) {
+                    bienvenida += ` \n\n🏷️ Segmento detectado: **${userCluster}**`;
+                }
+                addMessage('assistant', bienvenida);
+
+            } catch (e) {
+                addErrorMessage(`Error al identificar usuario: ${e.message}`);
+                addDiagnostic(`Error detallado: ${e.name}: ${e.message}\n\nVerifica que:\n1. El backend esté corriendo en puerto 8000\n2. El usuario ${userId_} exista en la base de datos`);
+            }
+        }
+
+        // Enviar mensaje al chat
+        async function sendChatMessage(message) {
+            // Mostrar "escribiendo..."
+            const typingId = Date.now();
+            const typingDiv = addMessage('assistant', 'Escribiendo...', typingId);
+
+            try {
+                const res = await fetch(`${BACKEND_URL}/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    mode: 'cors',
+                    body: JSON.stringify({
+                        message: message,
+                        user_id: userId,
+                        conversation_history: conversationHistory
+                    })
+                });
+
+                if (!res.ok) {
+                    typingDiv.querySelector('.message-bubble').textContent = 'Error del servidor. Intenta de nuevo.';
+                    return;
+                }
+
+                const data = await res.json();
+                const response = data.response || 'Sin respuesta';
+
+                // Guardar en historial
+                conversationHistory.push({ role: 'user', content: message });
+                conversationHistory.push({ role: 'assistant', content: response });
+
+                // Efecto de escritura
+                typeMessage(typingDiv, response);
+                resetInactivityTimer();
+
+            } catch (e) {
+                typingDiv.querySelector('.message-bubble').textContent = `Error: ${e.message}`;
+                addDiagnostic(`Error al enviar mensaje: ${e.name}: ${e.message}`);
+            }
+        }
+
+        // Agregar mensaje al chat
+        function addMessage(role, text, id = null) {
+            const chatArea = document.getElementById('chatArea');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+            if (id) messageDiv.id = `msg-${id}`;
+
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble';
+            bubble.textContent = text;
+
+            messageDiv.appendChild(bubble);
+            chatArea.appendChild(messageDiv);
+            chatArea.scrollTop = chatArea.scrollHeight;
+
+            return messageDiv;
+        }
+
+        // Agregar mensaje de error
+        function addErrorMessage(text) {
+            const chatArea = document.getElementById('chatArea');
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = text;
+            chatArea.appendChild(errorDiv);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        // Agregar mensaje de diagnóstico
+        function addDiagnostic(text) {
+            const chatArea = document.getElementById('chatArea');
+            // Eliminar diagnósticos anteriores
+            const oldDiagnostics = chatArea.querySelectorAll('.diagnostic');
+            oldDiagnostics.forEach(el => el.remove());
+
+            const diagDiv = document.createElement('div');
+            diagDiv.className = 'diagnostic';
+            diagDiv.textContent = text;
+            chatArea.appendChild(diagDiv);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        // Efecto de escritura letra por letra
+        async function typeMessage(messageDiv, text) {
+            const bubble = messageDiv.querySelector('.message-bubble');
+            bubble.textContent = '';
+
+            for (let i = 0; i < text.length; i++) {
+                bubble.textContent += text[i];
+                await new Promise(resolve => setTimeout(resolve, 15));
+            }
+        }
+    </script>
+</body>
+
+</html>
